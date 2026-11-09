@@ -47,6 +47,19 @@ MONGODB
 CASSANDRA
 """
 
+# ==========================================
+# PLAN DE POBLAMIENTO PARA CASSANDRA
+# ==========================================
+# 1. Crear un script generador (mock) que simule dispositivos IoT enviando telemetría.
+# 2. RF-C01 y C07: Iterar sobre una lista de 5 pacientes e insertar cientos de lecturas 
+#    de frecuencia cardíaca y temperatura en 'signos_por_paciente' y 'signos_por_tipo'.
+# 3. RF-C03 y C04: Insertar un evento simulado de anomalía (ej. ritmo bajo) en 
+#    'alertas_por_paciente' y 'alertas_por_area'.
+# 4. RF-C05: Insertar manualmente 3 registros en 'llegadas_por_doctor' para simular 
+#    la sala de espera.
+# 5. RF-C06: Generar un ciclo que inserte "pings" de batería del 100% al 10% en 
+#    'bateria_dispositivos'.
+
 # -------------------
 """
 DGRAPH
