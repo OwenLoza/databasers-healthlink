@@ -10,8 +10,7 @@ MONGODB
 # 2. Borrar las colecciones pacientes y consultas si ya existen, para poder
 #    correr el script varias veces sin duplicar datos.
 #
-# 3. Crear las colecciones e índices definidos en Mongo/pacientes.js y
-#    Mongo/consultas.js:
+# 3. Crear las colecciones e índices del modelo de datos (ver reporte):
 #      pacientes: { curp: 1 } único
 #                 { "alergias.sustancia": 1, "alergias.severidad": 1 }
 #      consultas: { paciente_id: 1, fecha: -1 }
