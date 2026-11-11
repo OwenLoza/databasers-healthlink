@@ -63,3 +63,35 @@ CASSANDRA
 """
 DGRAPH
 """
+
+# 1. Conectarse con conectar_dgraph() de connect.py.
+#
+# 2. Borrar todos los datos y el esquema con client.alter(Operation(drop_all=True)),
+#    para poder correr el script varias veces sin duplicar nodos.
+#
+# 3. Cargar el esquema del modelo de datos
+#
+# 4. Generar los datos de prueba y guardarlos en data/:
+#      - data/doctores.json: doc_01 ... doc_10 con nombre y especialidad (los
+#        mismos doctor_id que usa MongoDB).
+#      - data/medicamentos.json: unos 30 medicamentos med_001 ... con nombre y
+#        principio activo (warfarina, ibuprofeno, paracetamol, metformina, ...).
+#      - data/interacciones.json: pares de medicamento_id que interactúan, por
+#        ejemplo warfarina-ibuprofeno y warfarina-aspirina, para probar RF-D04
+#        y RF-D07.
+#
+# 5. Insertar en una transacción los nodos Doctor, Medicamento y Paciente
+#    (solo id y nombre), usando nodos en blanco (_:doc_01, _:med_001, ...)
+#    para poder conectarlos en el mismo paso.
+#
+# 6. Crear las aristas:
+#      - interactua_con entre cada par de data/interacciones.json (una sola vez
+#        por par; la reversa permite consultarlo en ambos sentidos).
+#      - atendido_por: a cada paciente se le asignan 1 a 3 doctores al azar.
+#        El paciente pac_0001 queda con un cardiólogo y un internista (RF-D05).
+#      - Prescripcion: 1 a 4 por paciente, con dosis, fecha_inicio y activa, y
+#        sus aristas tiene_prescripcion, medicamento y prescrita_por. El paciente
+#        pac_0001 toma warfarina, para probar la alerta de RF-D04.
+#
+# 7. Confirmar la carga contando los nodos de cada tipo con una consulta
+#    count(uid) por dgraph.type
