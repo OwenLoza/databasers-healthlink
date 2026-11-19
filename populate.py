@@ -280,9 +280,33 @@ def poblar_dgraph(pacientes):
 CASSANDRA
 """
 
+TABLAS_CASSANDRA = ["signos_por_paciente", "signos_por_tipo", "alertas_por_paciente",
+                    "alertas_por_area", "llegadas_por_doctor", "bateria_dispositivos"]
+
+
+def crear_tablas_cassandra(session):
+    """Ejecuta cada CREATE TABLE de esquema.cql (sin las líneas de comentario)."""
+    texto = ""
+    with open("Cassandra/esquema.cql", encoding="utf-8") as f:
+        for linea in f:
+            if not linea.strip().startswith("--"):
+                texto += linea
+
+    for sentencia in texto.split(";"):
+        if sentencia.strip():
+            session.execute(sentencia)
+
+
 def poblar_cassandra(pacientes):
-    # En reconstrucción: cada RF de Cassandra agregará aquí sus datos de prueba.
-    print("Cassandra: pendiente (módulo en reconstrucción)")
+    session = telemetria.session
+
+    # DROP y no TRUNCATE: así, si cambia el esquema, las tablas se crean con la versión nueva.
+    for tabla in TABLAS_CASSANDRA:
+        session.execute(f"DROP TABLE IF EXISTS {tabla}")
+    crear_tablas_cassandra(session)
+
+    print("Cassandra:")
+    print(f"  tablas creadas: {len(TABLAS_CASSANDRA)} (los datos se agregan con cada RF)")
 
 
 if __name__ == "__main__":
