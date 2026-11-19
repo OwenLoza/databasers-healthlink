@@ -1,0 +1,5 @@
+pymongo
+cassandra-driver
+pyasyncore  # cassandra-driver lo necesita en Python 3.12+ (se quitó asyncore)
+pydgraph
+faker
