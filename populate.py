@@ -305,8 +305,27 @@ def poblar_cassandra(pacientes):
         session.execute(f"DROP TABLE IF EXISTS {tabla}")
     crear_tablas_cassandra(session)
 
+    ahora = datetime.now().replace(microsecond=0)
+    con_dispositivo = pacientes[:10]   # Ana es la primera, con pulsera_01
+
+    # RF-C01, C02, C07: una lectura de cada tipo cada 20 minutos durante las últimas 8 horas.
+    lecturas = 0
+    numero = 1
+    for p in con_dispositivo:
+        dispositivo = f"pulsera_{numero:02d}"
+        for k in range(24):
+            ts = ahora - timedelta(minutes=20 * k)
+            if ts.date() != ahora.date():
+                break   # solo lecturas de hoy, para que las consultas "del día" tengan datos
+            telemetria.guardar_lectura(p["curp"], "frecuencia_cardiaca", round(random.gauss(78, 12)), dispositivo, ts)
+            telemetria.guardar_lectura(p["curp"], "temperatura", round(random.gauss(36.8, 0.5), 1), dispositivo, ts)
+            telemetria.guardar_lectura(p["curp"], "oxigenacion", round(random.uniform(92, 99)), dispositivo, ts)
+            lecturas += 3
+        numero += 1
+
     print("Cassandra:")
-    print(f"  tablas creadas: {len(TABLAS_CASSANDRA)} (los datos se agregan con cada RF)")
+    print(f"  lecturas: {lecturas} (en signos_por_paciente y signos_por_tipo)")
+    print(f"  dispositivos: {len(con_dispositivo)} (pulsera_01 a pulsera_{len(con_dispositivo):02d})")
 
 
 if __name__ == "__main__":
