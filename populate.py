@@ -320,14 +320,17 @@ def poblar_cassandra(pacientes):
             ts = ahora - timedelta(minutes=20 * k)
             if ts.date() != ahora.date():
                 break   # solo lecturas de hoy, para que las consultas "del día" tengan datos
-            telemetria.guardar_lectura(p["curp"], "frecuencia_cardiaca", round(random.gauss(78, 12)), dispositivo, ts)
+            fc = round(random.gauss(78, 12))
+            if p is ANA and k == 6:
+                fc = 45   # hace 2 h: la bradicardia que dispara la alerta crítica de Ana (abajo)
+            telemetria.guardar_lectura(p["curp"], "frecuencia_cardiaca", fc, dispositivo, ts)
             telemetria.guardar_lectura(p["curp"], "temperatura", round(random.gauss(36.8, 0.5), 1), dispositivo, ts)
             telemetria.guardar_lectura(p["curp"], "oxigenacion", round(random.uniform(92, 99)), dispositivo, ts)
             lecturas += 3
         numero += 1
 
     # RF-C03, C04: alerta crítica de Ana en Urgencias (para la demo) y 12 alertas al azar, solo de hoy.
-    alertas = [(ANA["curp"], "Ritmo cardiaco bajo", 1, "Urgencias", ahora - timedelta(hours=2))]
+    alertas = [(ANA["curp"], "Ritmo cardiaco bajo (45 lpm)", 1, "Urgencias", ahora - timedelta(hours=2))]
     for _ in range(12):
         p = random.choice(con_dispositivo)
         alertas.append((p["curp"], random.choice(TEXTOS_ALERTA), random.randint(1, 3),
