@@ -1,0 +1,14 @@
+[
+  {"codigo_cie10": "G43.0", "descripcion": "Migraña sin aura", "categoria": "Enfermedades del sistema nervioso"},
+  {"codigo_cie10": "G44.2", "descripcion": "Cefalea tensional", "categoria": "Enfermedades del sistema nervioso"},
+  {"codigo_cie10": "I10", "descripcion": "Hipertensión esencial", "categoria": "Enfermedades del sistema circulatorio"},
+  {"codigo_cie10": "I48", "descripcion": "Fibrilación auricular", "categoria": "Enfermedades del sistema circulatorio"},
+  {"codigo_cie10": "E11", "descripcion": "Diabetes mellitus tipo 2", "categoria": "Enfermedades endocrinas"},
+  {"codigo_cie10": "E78.0", "descripcion": "Hipercolesterolemia pura", "categoria": "Enfermedades endocrinas"},
+  {"codigo_cie10": "J06.9", "descripcion": "Infección aguda de vías respiratorias superiores", "categoria": "Enfermedades del sistema respiratorio"},
+  {"codigo_cie10": "J45", "descripcion": "Asma", "categoria": "Enfermedades del sistema respiratorio"},
+  {"codigo_cie10": "K29.7", "descripcion": "Gastritis", "categoria": "Enfermedades del sistema digestivo"},
+  {"codigo_cie10": "K21.9", "descripcion": "Reflujo gastroesofágico", "categoria": "Enfermedades del sistema digestivo"},
+  {"codigo_cie10": "M54.5", "descripcion": "Lumbalgia", "categoria": "Enfermedades del sistema osteomuscular"},
+  {"codigo_cie10": "N39.0", "descripcion": "Infección de vías urinarias", "categoria": "Enfermedades del sistema genitourinario"}
+]

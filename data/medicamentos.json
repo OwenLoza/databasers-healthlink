@@ -1,0 +1,35 @@
+{
+  "medicamentos": [
+    {"nombre": "Warfarina", "principio_activo": "warfarina sódica"},
+    {"nombre": "Ibuprofeno", "principio_activo": "ibuprofeno"},
+    {"nombre": "Aspirina", "principio_activo": "ácido acetilsalicílico"},
+    {"nombre": "Paracetamol", "principio_activo": "paracetamol"},
+    {"nombre": "Naproxeno", "principio_activo": "naproxeno"},
+    {"nombre": "Metformina", "principio_activo": "metformina"},
+    {"nombre": "Losartán", "principio_activo": "losartán potásico"},
+    {"nombre": "Enalapril", "principio_activo": "enalapril"},
+    {"nombre": "Espironolactona", "principio_activo": "espironolactona"},
+    {"nombre": "Atorvastatina", "principio_activo": "atorvastatina"},
+    {"nombre": "Claritromicina", "principio_activo": "claritromicina"},
+    {"nombre": "Amoxicilina", "principio_activo": "amoxicilina"},
+    {"nombre": "Omeprazol", "principio_activo": "omeprazol"},
+    {"nombre": "Clopidogrel", "principio_activo": "clopidogrel"},
+    {"nombre": "Sumatriptán", "principio_activo": "sumatriptán"},
+    {"nombre": "Sertralina", "principio_activo": "sertralina"},
+    {"nombre": "Salbutamol", "principio_activo": "salbutamol"},
+    {"nombre": "Propranolol", "principio_activo": "propranolol"}
+  ],
+  "interacciones": [
+    ["Warfarina", "Ibuprofeno"],
+    ["Warfarina", "Aspirina"],
+    ["Warfarina", "Naproxeno"],
+    ["Warfarina", "Claritromicina"],
+    ["Aspirina", "Ibuprofeno"],
+    ["Enalapril", "Espironolactona"],
+    ["Losartán", "Espironolactona"],
+    ["Atorvastatina", "Claritromicina"],
+    ["Clopidogrel", "Omeprazol"],
+    ["Sumatriptán", "Sertralina"],
+    ["Propranolol", "Salbutamol"]
+  ]
+}

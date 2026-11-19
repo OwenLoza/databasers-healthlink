@@ -1,0 +1,10 @@
+[
+  {"cedula_profesional": "12345678", "nombre": "María", "apellidos": "Ruiz Pérez", "especialidad": "Medicina interna", "telefono": "3312345678", "email": "maria.ruiz@healthlink.mx", "consultorio": "Torre Médica, piso 3, 305", "activo": true},
+  {"cedula_profesional": "23456789", "nombre": "Jorge", "apellidos": "Hernández Soto", "especialidad": "Cardiología", "telefono": "3323456789", "email": "jorge.hernandez@healthlink.mx", "consultorio": "Torre Médica, piso 4, 410", "activo": true},
+  {"cedula_profesional": "34567890", "nombre": "Laura", "apellidos": "Gómez Ibarra", "especialidad": "Neurología", "telefono": "3334567890", "email": "laura.gomez@healthlink.mx", "consultorio": "Torre Médica, piso 5, 502", "activo": true},
+  {"cedula_profesional": "45678901", "nombre": "Ricardo", "apellidos": "Torres Medina", "especialidad": "Endocrinología", "telefono": "3345678901", "email": "ricardo.torres@healthlink.mx", "consultorio": "Torre Médica, piso 2, 210", "activo": true},
+  {"cedula_profesional": "56789012", "nombre": "Sofía", "apellidos": "Ramírez Luna", "especialidad": "Medicina general", "telefono": "3356789012", "email": "sofia.ramirez@healthlink.mx", "consultorio": "Planta baja, 08", "activo": true},
+  {"cedula_profesional": "67890123", "nombre": "Andrés", "apellidos": "Castillo Vega", "especialidad": "Neumología", "telefono": "3367890123", "email": "andres.castillo@healthlink.mx", "consultorio": "Torre Médica, piso 3, 312", "activo": true},
+  {"cedula_profesional": "78901234", "nombre": "Patricia", "apellidos": "Morales Díaz", "especialidad": "Gastroenterología", "telefono": "3378901234", "email": "patricia.morales@healthlink.mx", "consultorio": "Torre Médica, piso 2, 204", "activo": true},
+  {"cedula_profesional": "89012345", "nombre": "Fernando", "apellidos": "Navarro Ruiz", "especialidad": "Urgencias", "telefono": "3389012345", "email": "fernando.navarro@healthlink.mx", "consultorio": "Urgencias, cubículo 3", "activo": true}
+]

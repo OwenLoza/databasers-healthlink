@@ -1,97 +1,352 @@
-"""HealthLink: pasos para poblar las bases de datos (solo comentarios por ahora)."""
+"""HealthLink: borra y vuelve a poblar las tres bases con datos de prueba.
+
+Uso:  python populate.py   (con los tres contenedores arriba)
+
+Los catálogos fijos están en data/ (doctores, diagnósticos, medicamentos e
+interacciones). Los pacientes se generan con Faker y son los MISMOS en las tres
+bases: se enlazan por CURP. Los doctores se enlazan por cédula profesional.
+Las lecturas de Cassandra usan la fecha de hoy para que las consultas
+"del día" regresen datos.
+"""
+
+import json
+import random
+from datetime import date, datetime, timedelta
+
+import pydgraph
+from faker import Faker
+
+from Cassandra import telemetria
+from Dgraph import relaciones
+from Mongo import expedientes
+
+fake = Faker("es_MX")
+Faker.seed(42)
+random.seed(42)
+
+NUM_PACIENTES = 40
+NUM_CONSULTAS = 300
+
+
+def leer_json(ruta):
+    with open(ruta, encoding="utf-8") as f:
+        return json.load(f)
+
+
+DOCTORES = leer_json("data/doctores.json")
+DIAGNOSTICOS = leer_json("data/diagnosticos.json")
+CATALOGO = leer_json("data/medicamentos.json")
+MEDICAMENTOS = CATALOGO["medicamentos"]
+INTERACCIONES = CATALOGO["interacciones"]
+
+# Paciente fijo para la demo: alergia alta a penicilina, toma warfarina y la atiende la Dra. María Ruiz.
+ANA = {
+    "curp": "LOGA900215MJCPRN04",
+    "nombre": "Ana",
+    "apellidos": "López García",
+    "fecha_nacimiento": datetime(1990, 2, 15),
+    "sexo": "F",
+    "tipo_sangre": "O+",
+    "telefono": "3311223344",
+    "email": "ana.lopez@mail.com",
+    "direccion": {"calle": "Av. Vallarta 1500", "ciudad": "Guadalajara", "estado": "Jalisco", "cp": "44100"},
+    "contacto_emergencia": {"nombre": "Luis López", "parentesco": "Hermano", "telefono": "3399887766"},
+    "alergias": [
+        {"sustancia": "Penicilina", "severidad": "alta", "reaccion": "Anafilaxia"},
+        {"sustancia": "Polen", "severidad": "baja", "reaccion": "Rinitis"},
+    ],
+    "fecha_registro": datetime(2026, 9, 1),
+}
+CEDULA_RUIZ = "12345678"        # Medicina interna
+CEDULA_HERNANDEZ = "23456789"   # Cardiología
+
+ALERGIAS = [("Penicilina", "Anafilaxia"), ("Polen", "Rinitis"), ("Sulfas", "Urticaria"),
+            ("Látex", "Dermatitis"), ("Mariscos", "Edema"), ("Aspirina", "Broncoespasmo")]
+
+# Motivo y nota de ejemplo por diagnóstico (para que la búsqueda por texto tenga resultados).
+MOTIVOS = {
+    "G43.0": ("Dolor de cabeza intenso desde hace 3 días", "Paciente refiere migraña con sensibilidad a la luz."),
+    "G44.2": ("Dolor de cabeza opresivo", "Cefalea en banda asociada a estrés, sin datos de migraña."),
+    "I10": ("Control de presión arterial", "Hipertensión en seguimiento, se ajusta dieta baja en sodio."),
+    "I48": ("Palpitaciones", "Ritmo irregular en electrocardiograma, se indica anticoagulación."),
+    "E11": ("Control de glucosa", "Diabetes en seguimiento, glucosa en ayuno elevada."),
+    "E78.0": ("Resultados de laboratorio", "Colesterol LDL elevado, se recomienda ejercicio."),
+    "J06.9": ("Dolor de garganta y fiebre", "Cuadro viral de vías respiratorias, reposo e hidratación."),
+    "J45": ("Falta de aire", "Crisis asmática leve, se revisa técnica de inhalador."),
+    "K29.7": ("Ardor en el estómago", "Gastritis por consumo de antiinflamatorios."),
+    "K21.9": ("Acidez después de comer", "Reflujo, se indica no acostarse después de cenar."),
+    "M54.5": ("Dolor de espalda baja", "Lumbalgia mecánica sin irradiación."),
+    "N39.0": ("Ardor al orinar", "Infección urinaria no complicada."),
+}
+
+
+# -------------------
+"""
+DATOS
+"""
+
+def generar_pacientes():
+    pacientes = [ANA]
+    for _ in range(NUM_PACIENTES - 1):
+        sexo = random.choice(["F", "M"])
+        nacimiento = fake.date_of_birth(minimum_age=1, maximum_age=90)
+        pacientes.append({
+            "curp": fake.unique.curp(),
+            "nombre": fake.first_name_female() if sexo == "F" else fake.first_name_male(),
+            "apellidos": f"{fake.last_name()} {fake.last_name()}",
+            "fecha_nacimiento": datetime(nacimiento.year, nacimiento.month, nacimiento.day),
+            "sexo": sexo,
+            "tipo_sangre": random.choice(["O+", "O-", "A+", "A-", "B+", "AB+"]),
+            "telefono": f"33{random.randint(10000000, 99999999)}",
+            "email": fake.email(),
+            "direccion": {
+                "calle": fake.street_address(),
+                "ciudad": fake.city(),
+                "estado": fake.state(),
+                "cp": fake.postcode(),
+            },
+            "contacto_emergencia": {
+                "nombre": fake.name(),
+                "parentesco": random.choice(["Madre", "Padre", "Hermano", "Hermana", "Pareja", "Hijo"]),
+                "telefono": f"33{random.randint(10000000, 99999999)}",
+            },
+            "alergias": [
+                {"sustancia": sustancia, "severidad": random.choice(["alta", "media", "baja"]), "reaccion": reaccion}
+                for sustancia, reaccion in random.sample(ALERGIAS, k=random.randint(0, 2))
+            ],
+            "fecha_registro": datetime(2026, random.randint(8, 10), random.randint(1, 28)),
+        })
+    return pacientes
+
+
+def fecha_al_azar(desde, hasta):
+    segundos = int((hasta - desde).total_seconds())
+    return desde + timedelta(seconds=random.randint(0, segundos))
+
 
 # -------------------
 """
 MONGODB
 """
 
-# 1. Conectarse con conectar_mongo() de connect.py (base "healthlink").
-#
-# 2. Borrar las colecciones pacientes y consultas si ya existen, para poder
-#    correr el script varias veces sin duplicar datos.
-#
-# 3. Crear las colecciones e índices del modelo de datos (ver reporte):
-#      pacientes: { curp: 1 } único
-#                 { "alergias.sustancia": 1, "alergias.severidad": 1 }
-#      consultas: { paciente_id: 1, fecha: -1 }
-#                 { diagnostico: "text", notas: "text" } en español
-#                 { doctor_id: 1, fecha: -1 }
-#                 { fecha: 1 }
-#    Los índices se crean antes de insertar para que la CURP repetida
-#    se rechace desde el primer registro.
-#
-# 4. Generar los datos de prueba con Faker (locale es_MX) y guardarlos en
-#    data/pacientes.json y data/consultas.json:
-#      - 50 pacientes con _id "pac_0001", "pac_0002", ..., CURP, contacto de
-#        emergencia y de 0 a 3 alergias (sustancia y severidad alta/media/baja).
-#        Al menos un paciente con alergia alta y otro con alergia baja a la
-#        penicilina, para probar RF-M06.
-#      - 300 consultas repartidas entre los pacientes y entre los doctores
-#        doc_01 ... doc_10, con fechas de septiembre a noviembre de 2026,
-#        diagnósticos con su código CIE-10 (E11, I10, G43.0, J06.9, ...) y
-#        algunas notas que mencionen "migraña", para probar RF-M04 y RF-M07.
-#    Los paciente_id y doctor_id son los mismos que se usarán en Dgraph y
-#    Cassandra, así las tres bases quedan enlazadas.
-#
-# 5. Leer data/pacientes.json e insertarlos con insert_many en pacientes.
-#
-# 6. Leer data/consultas.json, convertir las fechas de texto a datetime e
-#    insertarlas con insert_many en consultas.
-#
-# 7. Imprimir cuántos documentos quedaron en cada colección con
-#    count_documents({}) para confirmar la carga.
+def poblar_mongo(pacientes):
+    db = expedientes.db
+    for coleccion in ["pacientes", "consultas", "doctores", "diagnosticos"]:
+        db.drop_collection(coleccion)
 
-# -------------------
-"""
-CASSANDRA
-"""
+    # Índices antes de insertar: una CURP o cédula repetida se rechaza desde el primer registro.
+    expedientes.crear_indices()
 
-# ==========================================
-# PLAN DE POBLAMIENTO PARA CASSANDRA
-# ==========================================
-# 1. Crear un script generador (mock) que simule dispositivos IoT enviando telemetría.
-# 2. RF-C01 y C07: Iterar sobre una lista de 5 pacientes e insertar cientos de lecturas 
-#    de frecuencia cardíaca y temperatura en 'signos_por_paciente' y 'signos_por_tipo'.
-# 3. RF-C03 y C04: Insertar un evento simulado de anomalía (ej. ritmo bajo) en 
-#    'alertas_por_paciente' y 'alertas_por_area'.
-# 4. RF-C05: Insertar manualmente 3 registros en 'llegadas_por_doctor' para simular 
-#    la sala de espera.
-# 5. RF-C06: Generar un ciclo que inserte "pings" de batería del 100% al 10% en 
-#    'bateria_dispositivos'.
+    # insert_many agrega el _id a cada dict; se pasan copias para no tocar las listas originales.
+    db.doctores.insert_many([dict(d) for d in DOCTORES])
+    db.diagnosticos.insert_many([dict(d) for d in DIAGNOSTICOS])
+    db.pacientes.insert_many([dict(p) for p in pacientes])
+
+    # Los _id que generó MongoDB, para referenciarlos desde consultas.
+    id_paciente = {p["curp"]: p["_id"] for p in db.pacientes.find({}, {"curp": 1})}
+    doctores = list(db.doctores.find())
+    ruiz = next(d for d in doctores if d["cedula_profesional"] == CEDULA_RUIZ)
+
+    consultas = []
+    for i in range(NUM_CONSULTAS):
+        # Las primeras 3 consultas son de Ana con la Dra. Ruiz (fibrilación auricular → warfarina).
+        if i < 3:
+            curp, doctor, codigo = ANA["curp"], ruiz, "I48"
+        else:
+            curp, doctor = random.choice(pacientes)["curp"], random.choice(doctores)
+            codigo = random.choice(DIAGNOSTICOS)["codigo_cie10"]
+        descripcion = next(d["descripcion"] for d in DIAGNOSTICOS if d["codigo_cie10"] == codigo)
+        motivo, nota = MOTIVOS[codigo]
+
+        consultas.append({
+            "paciente_id": id_paciente[curp],
+            "doctor_id": doctor["_id"],
+            "doctor_nombre": f"{doctor['nombre']} {doctor['apellidos']}",
+            "especialidad": doctor["especialidad"],
+            "fecha": fecha_al_azar(datetime(2026, 9, 1), datetime.now()),
+            "motivo": motivo,
+            "diagnostico": descripcion,
+            "diagnostico_cie10": codigo,
+            "notas": nota,
+            "signos": {
+                "presion": f"{random.randint(105, 150)}/{random.randint(65, 95)}",
+                "temperatura": round(random.uniform(36.0, 38.5), 1),
+                "peso_kg": round(random.uniform(45, 110), 1),
+            },
+            "medicamentos_recetados": [
+                {"nombre": m["nombre"], "dosis": random.choice(["5 mg", "50 mg", "500 mg"]),
+                 "frecuencia": random.choice(["cada 8 horas", "cada 12 horas", "cada 24 horas"]),
+                 "dias": random.choice([5, 7, 14, 30])}
+                for m in random.sample(MEDICAMENTOS, k=random.randint(0, 2))
+            ],
+        })
+    db.consultas.insert_many(consultas)
+
+    print("MongoDB:")
+    for coleccion in ["pacientes", "consultas", "doctores", "diagnosticos"]:
+        print(f"  {coleccion}: {db[coleccion].count_documents({})}")
+
 
 # -------------------
 """
 DGRAPH
 """
 
-# 1. Conectarse con conectar_dgraph() de connect.py.
-#
-# 2. Borrar todos los datos y el esquema con client.alter(Operation(drop_all=True)),
-#    para poder correr el script varias veces sin duplicar nodos.
-#
-# 3. Cargar el esquema del modelo de datos
-#
-# 4. Generar los datos de prueba y guardarlos en data/:
-#      - data/doctores.json: doc_01 ... doc_10 con nombre y especialidad (los
-#        mismos doctor_id que usa MongoDB).
-#      - data/medicamentos.json: unos 30 medicamentos med_001 ... con nombre y
-#        principio activo (warfarina, ibuprofeno, paracetamol, metformina, ...).
-#      - data/interacciones.json: pares de medicamento_id que interactúan, por
-#        ejemplo warfarina-ibuprofeno y warfarina-aspirina, para probar RF-D04
-#        y RF-D07.
-#
-# 5. Insertar en una transacción los nodos Doctor, Medicamento y Paciente
-#    (solo id y nombre), usando nodos en blanco (_:doc_01, _:med_001, ...)
-#    para poder conectarlos en el mismo paso.
-#
-# 6. Crear las aristas:
-#      - interactua_con entre cada par de data/interacciones.json (una sola vez
-#        por par; la reversa permite consultarlo en ambos sentidos).
-#      - atendido_por: a cada paciente se le asignan 1 a 3 doctores al azar.
-#        El paciente pac_0001 queda con un cardiólogo y un internista (RF-D05).
-#      - Prescripcion: 1 a 4 por paciente, con dosis, fecha_inicio y activa, y
-#        sus aristas tiene_prescripcion, medicamento y prescrita_por. El paciente
-#        pac_0001 toma warfarina, para probar la alerta de RF-D04.
-#
-# 7. Confirmar la carga contando los nodos de cada tipo con una consulta
-#    count(uid) por dgraph.type
+def prescripcion(medicamento, cedula, dias_atras, dias_tratamiento):
+    """Nodo Prescripcion anidado (con nodos en blanco para el medicamento y el doctor)."""
+    inicio = datetime.now() - timedelta(days=dias_atras)
+    fin = inicio + timedelta(days=dias_tratamiento)
+    return {
+        "dgraph.type": "Prescripcion",
+        "dosis": random.choice(["5 mg cada 24 h", "50 mg cada 12 h", "500 mg cada 8 h"]),
+        "fecha_inicio": inicio.isoformat(timespec="seconds"),
+        "fecha_final": fin.isoformat(timespec="seconds"),
+        "activa": fin > datetime.now(),
+        "prescribe": {"uid": "_:med" + str(MEDICAMENTOS.index(medicamento))},
+        "prescrita_por": {"uid": "_:doc" + cedula},
+    }
+
+
+def poblar_dgraph(pacientes):
+    client = relaciones.client
+    client.alter(pydgraph.Operation(drop_all=True))
+    with open("Dgraph/esquema.dql", encoding="utf-8") as f:
+        client.alter(pydgraph.Operation(schema=f.read()))
+
+    # Nodos en blanco (_:docXXXX, _:medN) para conectar todo en una sola mutación.
+    nodos = []
+    for d in DOCTORES:
+        nodos.append({
+            "uid": "_:doc" + d["cedula_profesional"],
+            "dgraph.type": "Doctor",
+            "cedula_profesional": d["cedula_profesional"],
+            "nombre": f"{d['nombre']} {d['apellidos']}",
+            "especialidad": d["especialidad"],
+        })
+
+    por_nombre = {m["nombre"]: m for m in MEDICAMENTOS}
+    for i, m in enumerate(MEDICAMENTOS):
+        nodos.append({
+            "uid": f"_:med{i}",
+            "dgraph.type": "Medicamento",
+            "nombre": m["nombre"],
+            "principio_activo": m["principio_activo"],
+        })
+    # Cada interacción se guarda una sola vez; @reverse permite verla desde los dos fármacos.
+    for a, b in INTERACCIONES:
+        nodos.append({
+            "uid": "_:med" + str(MEDICAMENTOS.index(por_nombre[a])),
+            "interactua_con": [{"uid": "_:med" + str(MEDICAMENTOS.index(por_nombre[b]))}],
+        })
+
+    cedulas = [d["cedula_profesional"] for d in DOCTORES]
+    for p in pacientes:
+        if p is ANA:
+            doctores = [CEDULA_RUIZ, CEDULA_HERNANDEZ]
+            recetas = [prescripcion(por_nombre["Warfarina"], CEDULA_RUIZ, 20, 90)]
+        else:
+            doctores = random.sample(cedulas, k=random.randint(1, 3))
+            recetas = [
+                prescripcion(m, random.choice(doctores), random.randint(0, 90), random.choice([7, 14, 30, 60, 90]))
+                for m in random.sample(MEDICAMENTOS, k=random.randint(0, 3))
+            ]
+        nodos.append({
+            "uid": "_:" + p["curp"],
+            "dgraph.type": "Paciente",
+            "curp": p["curp"],
+            "nombre": f"{p['nombre']} {p['apellidos']}",
+            "atendido_por": [{"uid": "_:doc" + c} for c in doctores],
+            "tiene_prescripcion": recetas,
+        })
+
+    relaciones.mutar(nodos)
+
+    conteo = relaciones.consultar("""
+    {
+        pacientes(func: type(Paciente)) { total: count(uid) }
+        doctores(func: type(Doctor)) { total: count(uid) }
+        medicamentos(func: type(Medicamento)) { total: count(uid) }
+        prescripciones(func: type(Prescripcion)) { total: count(uid) }
+    }
+    """)
+    print("Dgraph:")
+    for tipo, resultado in conteo.items():
+        print(f"  {tipo}: {resultado[0]['total']}")
+
+
+# -------------------
+"""
+CASSANDRA
+"""
+
+TABLAS_CASSANDRA = ["signos_por_paciente", "signos_por_tipo", "alertas_por_paciente",
+                    "alertas_por_area", "llegadas_por_doctor", "bateria_dispositivos"]
+
+TEXTOS_ALERTA = ["Frecuencia cardiaca elevada", "Ritmo cardiaco bajo", "Fiebre",
+                 "Oxigenación baja", "Presión arterial elevada"]
+
+
+def poblar_cassandra(pacientes):
+    session = telemetria.session
+    for tabla in TABLAS_CASSANDRA:
+        session.execute(f"DROP TABLE IF EXISTS {tabla}")
+
+    # Ejecuta cada CREATE TABLE de esquema.cql (sin las líneas de comentario).
+    with open("Cassandra/esquema.cql", encoding="utf-8") as f:
+        cql = "\n".join(linea for linea in f if not linea.strip().startswith("--"))
+    for sentencia in cql.split(";"):
+        if sentencia.strip():
+            session.execute(sentencia)
+
+    ahora = datetime.now().replace(microsecond=0)
+    con_dispositivo = pacientes[:10]   # Ana es la primera, con pulsera_01
+
+    # RF-C01, C02, C07: una lectura de cada tipo cada 20 minutos durante las últimas 8 horas.
+    lecturas = 0
+    for n, p in enumerate(con_dispositivo, start=1):
+        dispositivo = f"pulsera_{n:02d}"
+        for k in range(24):
+            ts = ahora - timedelta(minutes=20 * k)
+            telemetria.guardar_lectura(p["curp"], "frecuencia_cardiaca", round(random.gauss(78, 12)), dispositivo, ts)
+            telemetria.guardar_lectura(p["curp"], "temperatura", round(random.gauss(36.8, 0.5), 1), dispositivo, ts)
+            telemetria.guardar_lectura(p["curp"], "oxigenacion", round(random.uniform(92, 99)), dispositivo, ts)
+            lecturas += 3
+
+        # RF-C06: un ping de batería por hora, bajando de 100%.
+        nivel = 100
+        for h in range(8, -1, -1):
+            telemetria.guardar_bateria(dispositivo, nivel, ahora - timedelta(hours=h))
+            nivel -= random.randint(2, 8)
+
+    # RF-C03, C04: alertas del día en distintas áreas y severidades.
+    telemetria.guardar_alerta(ANA["curp"], "Ritmo cardiaco bajo", 1, "Urgencias", ahora - timedelta(hours=2))
+    for _ in range(12):
+        p = random.choice(con_dispositivo)
+        telemetria.guardar_alerta(p["curp"], random.choice(TEXTOS_ALERTA), random.randint(1, 3),
+                                  random.choice(telemetria.AREAS), ahora - timedelta(minutes=random.randint(0, 480)))
+
+    # RF-C05: fila de espera de hoy para tres doctores, desde las 8:00.
+    inicio_dia = datetime.combine(date.today(), datetime.min.time()).replace(hour=8)
+    for cedula in [CEDULA_RUIZ, CEDULA_HERNANDEZ, DOCTORES[2]["cedula_profesional"]]:
+        for k, p in enumerate(random.sample(pacientes, k=4)):
+            telemetria.guardar_llegada(cedula, p["curp"], f"{p['nombre']} {p['apellidos']}",
+                                       inicio_dia + timedelta(minutes=25 * k))
+
+    print("Cassandra:")
+    print(f"  lecturas: {lecturas} (en signos_por_paciente y signos_por_tipo)")
+    print(f"  dispositivos: {len(con_dispositivo)} (pulsera_01 a pulsera_{len(con_dispositivo):02d})")
+    print("  alertas: 13 | llegadas: 12")
+
+
+if __name__ == "__main__":
+    pacientes = generar_pacientes()
+    poblar_mongo(pacientes)
+    poblar_dgraph(pacientes)
+    poblar_cassandra(pacientes)
+
+    print(f"\nListo. Paciente de prueba: {ANA['nombre']} {ANA['apellidos']} | CURP {ANA['curp']}")
+    print(f"Doctora de prueba: María Ruiz Pérez | Cédula {CEDULA_RUIZ}")
+
+    expedientes.db.client.close()
+    relaciones.client_stub.close()
+    telemetria.session.cluster.shutdown()
