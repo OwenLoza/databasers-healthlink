@@ -1,0 +1,51 @@
+# HealthLink: esquema de Dgraph.
+# Cada nodo usa su propio uid de Dgraph. Se enlaza con las otras bases por
+# curp (Paciente) y cedula_profesional (Doctor). Medicamento y Prescripcion solo viven aquí.
+
+type Paciente {
+    curp
+    nombre
+    atendido_por
+    tiene_prescripcion
+}
+
+type Doctor {
+    cedula_profesional
+    nombre
+    especialidad
+}
+
+type Medicamento {
+    nombre
+    principio_activo
+    interactua_con
+}
+
+type Prescripcion {
+    dosis
+    fecha_inicio
+    fecha_final
+    activa
+    prescribe
+    prescrita_por
+}
+
+# Llaves de enlace con MongoDB y Cassandra: exact para buscar con eq, @upsert para no duplicar.
+curp: string @index(exact) @upsert .
+cedula_profesional: string @index(exact) @upsert .
+
+# Datos
+nombre: string @index(term) .
+principio_activo: string @index(term) .
+especialidad: string .
+dosis: string .
+fecha_inicio: datetime .
+fecha_final: datetime .
+activa: bool @index(bool) .
+
+# Aristas (todas con @reverse para recorrerlas al revés con ~)
+atendido_por: [uid] @reverse .
+tiene_prescripcion: [uid] @reverse .
+prescribe: uid @reverse .
+prescrita_por: uid @reverse .
+interactua_con: [uid] @reverse .
