@@ -1,8 +1,7 @@
 """HealthLink: módulo de Telemetría IoT (Cassandra). RF-C01 a RF-C07.
 
-Las tablas están en Cassandra/esquema.cql. Cada consulta lee una sola partición
-(sin ALLOW FILTERING). Se enlaza con MongoDB por la CURP del paciente y la
-cédula profesional del doctor; los ids propios de cada fila son uuid.
+Tablas en esquema.cql. Cada consulta lee una sola partición (sin ALLOW FILTERING).
+Se enlaza con MongoDB y Dgraph por curp (paciente) y cedula_profesional (doctor).
 """
 
 import uuid
@@ -24,7 +23,7 @@ ESCRITURAS (las usan el menú y populate.py)
 """
 
 def guardar_lectura(curp, tipo, valor, dispositivo_id, ts):
-    """RF-C01: guarda la lectura en sus dos tablas con un BATCH (o se guardan las dos o ninguna)."""
+    """RF-C01: guarda la lectura en sus dos tablas con un BATCH (se guardan las dos o ninguna)."""
     lectura_id = uuid.uuid4()
     fecha = ts.date()
 
@@ -41,7 +40,8 @@ def guardar_lectura(curp, tipo, valor, dispositivo_id, ts):
 
 
 def guardar_alerta(curp, alerta, severidad, area, ts):
-    """RF-C03: guarda la alerta en la bitácora del paciente y en el tablero del área (BATCH)."""
+    """RF-C03: guarda la alerta en la bitácora del paciente y en el tablero del área (BATCH).
+    Solo se inserta: no hay funciones para actualizar ni borrar alertas."""
     alerta_id = uuid.uuid4()
     fecha = ts.date()
 
@@ -58,7 +58,7 @@ def guardar_alerta(curp, alerta, severidad, area, ts):
 
 
 def guardar_llegada(cedula, curp, nombre_paciente, hora_llegada):
-    """RF-C05: agrega un paciente a la fila de espera del doctor."""
+    """RF-C05: agrega al paciente a la fila de espera del doctor en ese día (una sola tabla, sin BATCH)."""
     stmt = session.prepare("""
         INSERT INTO llegadas_por_doctor (cedula_profesional, fecha, hora_llegada, llegada_id, curp, nombre_paciente)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -67,7 +67,8 @@ def guardar_llegada(cedula, curp, nombre_paciente, hora_llegada):
 
 
 def guardar_bateria(dispositivo_id, nivel, ts):
-    """RF-C06: registra un ping de batería del dispositivo."""
+    """RF-C06: guarda el nivel de batería que reporta un dispositivo (una sola tabla, sin BATCH).
+    No lleva uuid: un dispositivo no manda dos niveles en el mismo instante."""
     stmt = session.prepare("""
         INSERT INTO bateria_dispositivos (dispositivo_id, fecha, ts, nivel_bateria)
         VALUES (?, ?, ?, ?)
@@ -82,7 +83,9 @@ AUXILIARES
 
 def pedir_fecha(texto="Fecha (AAAA-MM-DD, Enter = hoy): "):
     valor = input(texto).strip()
-    return datetime.strptime(valor, "%Y-%m-%d").date() if valor else date.today()
+    if valor == "":
+        return date.today()
+    return datetime.strptime(valor, "%Y-%m-%d").date()
 
 
 def elegir(texto, opciones):
@@ -92,7 +95,7 @@ def elegir(texto, opciones):
         print(f"  {numero}. {opcion}")
         numero += 1
     numero = int(input(texto))
-    if not 1 <= numero <= len(opciones):
+    if numero < 1 or numero > len(opciones):
         raise ValueError("opción fuera de la lista")
     return opciones[numero - 1]
 
@@ -134,7 +137,7 @@ def c02_lecturas_recientes():
 
 
 def c03_registrar_alerta():
-    """RF-C03: registrar alerta biométrica (solo se inserta: bitácora inmutable)."""
+    """RF-C03: registrar alerta biométrica y mostrar la bitácora del día del paciente."""
     print("\n--- REGISTRAR ALERTA ---")
     curp = input("CURP del paciente: ").strip().upper()
     alerta = input("Descripción de la alerta: ").strip()
@@ -144,8 +147,18 @@ def c03_registrar_alerta():
         return
     area = elegir("Área: ", AREAS)
 
-    guardar_alerta(curp, alerta, severidad, area, datetime.now())
+    ahora = datetime.now()
+    guardar_alerta(curp, alerta, severidad, area, ahora)
     print("\nAlerta registrada.")
+
+    stmt = session.prepare("""
+        SELECT ts, severidad, area, alerta
+        FROM alertas_por_paciente
+        WHERE curp = ? AND fecha = ?
+    """)
+    print(f"\nBitácora de alertas de hoy ({curp}):")
+    for row in session.execute(stmt, (curp, ahora.date())):
+        print(f"  {row.ts:%H:%M:%S} | [{SEVERIDADES[row.severidad]}] | {row.area} | {row.alerta}")
 
 
 def c04_alertas_por_area():
@@ -167,35 +180,40 @@ def c04_alertas_por_area():
 
 
 def c05_registrar_llegada():
-    """RF-C05: registrar llegada de un paciente a la sala de espera y mostrar la fila."""
+    """RF-C05: registrar llegada a la sala de espera y mostrar la fila del día del doctor.
+    La cédula y la CURP se validan en MongoDB; el nombre del paciente se copia de ahí."""
     print("\n--- REGISTRAR LLEGADA ---")
-    cedula = input("Cédula del médico: ").strip()
-    curp = input("CURP del paciente: ").strip().upper()
-
-    # Enlace con MongoDB: el nombre se copia una vez aquí para que la fila no consulte otra base.
-    paciente = mongo.pacientes.find_one({"curp": curp}, {"nombre": 1, "apellidos": 1})
-    if not paciente:
-        print("No existe un paciente con esa CURP en MongoDB.")
+    cedula = input("Cédula profesional del doctor: ").strip()
+    doctor = mongo.doctores.find_one({"cedula_profesional": cedula})
+    if doctor is None:
+        print("No existe un doctor con esa cédula.")
         return
 
+    curp = input("CURP del paciente: ").strip().upper()
+    paciente = mongo.pacientes.find_one({"curp": curp})
+    if paciente is None:
+        print("No existe un paciente con esa CURP.")
+        return
+
+    nombre_paciente = f"{paciente['nombre']} {paciente['apellidos']}"
     ahora = datetime.now()
-    guardar_llegada(cedula, curp, f"{paciente['nombre']} {paciente['apellidos']}", ahora)
-    print("\nLlegada registrada.")
+    guardar_llegada(cedula, curp, nombre_paciente, ahora)
+    print(f"\nLlegada de {nombre_paciente} registrada.")
 
     stmt = session.prepare("""
         SELECT hora_llegada, curp, nombre_paciente
         FROM llegadas_por_doctor
         WHERE cedula_profesional = ? AND fecha = ?
     """)
-    print(f"\nFila de espera de hoy (cédula {cedula}):")
+    print(f"\nSala de espera de hoy - {doctor['nombre']} {doctor['apellidos']}:")
     turno = 1
     for row in session.execute(stmt, (cedula, ahora.date())):
-        print(f"  {turno}. {row.hora_llegada:%H:%M} | {row.nombre_paciente} | {row.curp}")
+        print(f"  {turno}. {row.hora_llegada:%H:%M} | {row.curp} | {row.nombre_paciente}")
         turno += 1
 
 
 def c06_historial_bateria():
-    """RF-C06: historial de batería de un dispositivo en un día (el más reciente primero)."""
+    """RF-C06: historial de batería del día de un dispositivo, el nivel más reciente primero."""
     print("\n--- HISTORIAL DE BATERÍA ---")
     dispositivo_id = input("Id del dispositivo (ej. pulsera_01): ").strip()
     fecha = pedir_fecha()
@@ -207,7 +225,7 @@ def c06_historial_bateria():
     """)
     rows = list(session.execute(stmt, (dispositivo_id, fecha)))
 
-    print(f"\n{len(rows)} registros de {dispositivo_id} el {fecha}:")
+    print(f"\n{len(rows)} reportes de batería de {dispositivo_id} el {fecha}:")
     for row in rows:
         print(f"  {row.ts:%H:%M:%S} | {row.nivel_bateria}%")
 

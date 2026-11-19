@@ -287,56 +287,90 @@ TEXTOS_ALERTA = ["Frecuencia cardiaca elevada", "Ritmo cardiaco bajo", "Fiebre",
                  "Oxigenación baja", "Presión arterial elevada"]
 
 
-def poblar_cassandra(pacientes):
-    session = telemetria.session
-    for tabla in TABLAS_CASSANDRA:
-        session.execute(f"DROP TABLE IF EXISTS {tabla}")
-
-    # Ejecuta cada CREATE TABLE de esquema.cql (sin las líneas de comentario).
+def crear_tablas_cassandra(session):
+    """Ejecuta cada CREATE TABLE de esquema.cql (sin las líneas de comentario)."""
+    texto = ""
     with open("Cassandra/esquema.cql", encoding="utf-8") as f:
-        cql = "\n".join(linea for linea in f if not linea.strip().startswith("--"))
-    for sentencia in cql.split(";"):
+        for linea in f:
+            if not linea.strip().startswith("--"):
+                texto += linea
+
+    for sentencia in texto.split(";"):
         if sentencia.strip():
             session.execute(sentencia)
+
+
+def poblar_cassandra(pacientes):
+    session = telemetria.session
+
+    # DROP y no TRUNCATE: así, si cambia el esquema, las tablas se crean con la versión nueva.
+    for tabla in TABLAS_CASSANDRA:
+        session.execute(f"DROP TABLE IF EXISTS {tabla}")
+    crear_tablas_cassandra(session)
 
     ahora = datetime.now().replace(microsecond=0)
     con_dispositivo = pacientes[:10]   # Ana es la primera, con pulsera_01
 
     # RF-C01, C02, C07: una lectura de cada tipo cada 20 minutos durante las últimas 8 horas.
     lecturas = 0
-    for n, p in enumerate(con_dispositivo, start=1):
-        dispositivo = f"pulsera_{n:02d}"
+    numero = 1
+    for p in con_dispositivo:
+        dispositivo = f"pulsera_{numero:02d}"
         for k in range(24):
             ts = ahora - timedelta(minutes=20 * k)
+            if ts.date() != ahora.date():
+                break   # solo lecturas de hoy, para que las consultas "del día" tengan datos
             telemetria.guardar_lectura(p["curp"], "frecuencia_cardiaca", round(random.gauss(78, 12)), dispositivo, ts)
             telemetria.guardar_lectura(p["curp"], "temperatura", round(random.gauss(36.8, 0.5), 1), dispositivo, ts)
             telemetria.guardar_lectura(p["curp"], "oxigenacion", round(random.uniform(92, 99)), dispositivo, ts)
             lecturas += 3
+        numero += 1
 
-        # RF-C06: un ping de batería por hora, bajando de 100%.
-        nivel = 100
-        for h in range(8, -1, -1):
-            telemetria.guardar_bateria(dispositivo, nivel, ahora - timedelta(hours=h))
-            nivel -= random.randint(2, 8)
-
-    # RF-C03, C04: alertas del día en distintas áreas y severidades.
-    telemetria.guardar_alerta(ANA["curp"], "Ritmo cardiaco bajo", 1, "Urgencias", ahora - timedelta(hours=2))
+    # RF-C03, C04: alerta crítica de Ana en Urgencias (para la demo) y 12 alertas al azar, solo de hoy.
+    alertas = [(ANA["curp"], "Ritmo cardiaco bajo", 1, "Urgencias", ahora - timedelta(hours=2))]
     for _ in range(12):
         p = random.choice(con_dispositivo)
-        telemetria.guardar_alerta(p["curp"], random.choice(TEXTOS_ALERTA), random.randint(1, 3),
-                                  random.choice(telemetria.AREAS), ahora - timedelta(minutes=random.randint(0, 480)))
+        alertas.append((p["curp"], random.choice(TEXTOS_ALERTA), random.randint(1, 3),
+                        random.choice(telemetria.AREAS), ahora - timedelta(minutes=random.randint(0, 480))))
 
-    # RF-C05: fila de espera de hoy para tres doctores, desde las 8:00.
-    inicio_dia = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+    total_alertas = 0
+    for curp, texto, severidad, area, ts in alertas:
+        if ts.date() == ahora.date():
+            telemetria.guardar_alerta(curp, texto, severidad, area, ts)
+            total_alertas += 1
+
+    # RF-C05: fila de espera de hoy desde las 8:00, 4 pacientes por doctor, uno cada 25 minutos.
+    # Ana no se incluye para registrar su llegada en vivo en la demo.
+    ocho = ahora.replace(hour=8, minute=0, second=0)
+    llegadas = 0
     for cedula in [CEDULA_RUIZ, CEDULA_HERNANDEZ, DOCTORES[2]["cedula_profesional"]]:
-        for k, p in enumerate(random.sample(pacientes, k=4)):
-            telemetria.guardar_llegada(cedula, p["curp"], f"{p['nombre']} {p['apellidos']}",
-                                       inicio_dia + timedelta(minutes=25 * k))
+        k = 0
+        for p in random.sample(pacientes[1:], 4):
+            hora = ocho + timedelta(minutes=25 * k)
+            if hora <= ahora:   # solo llegadas que ya pasaron
+                telemetria.guardar_llegada(cedula, p["curp"], f"{p['nombre']} {p['apellidos']}", hora)
+                llegadas += 1
+            k += 1
+
+    # RF-C06: cada pulsera reporta su batería una vez por hora en las últimas 8 horas,
+    # empezando en 100% y bajando de 3 a 8% por hora (solo reportes de hoy).
+    reportes = 0
+    for numero in range(1, len(con_dispositivo) + 1):
+        dispositivo = f"pulsera_{numero:02d}"
+        nivel = 100
+        for k in range(8, -1, -1):
+            ts = ahora - timedelta(hours=k)
+            if ts.date() == ahora.date():
+                telemetria.guardar_bateria(dispositivo, nivel, ts)
+                reportes += 1
+            nivel -= random.randint(3, 8)
 
     print("Cassandra:")
     print(f"  lecturas: {lecturas} (en signos_por_paciente y signos_por_tipo)")
     print(f"  dispositivos: {len(con_dispositivo)} (pulsera_01 a pulsera_{len(con_dispositivo):02d})")
-    print("  alertas: 13 | llegadas: 12")
+    print(f"  alertas: {total_alertas} (en alertas_por_paciente y alertas_por_area)")
+    print(f"  llegadas: {llegadas} (en llegadas_por_doctor, 3 doctores)")
+    print(f"  reportes de batería: {reportes} (en bateria_dispositivos)")
 
 
 if __name__ == "__main__":
