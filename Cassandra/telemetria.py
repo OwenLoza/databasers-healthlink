@@ -8,8 +8,6 @@ cédula profesional del doctor; los ids propios de cada fila son uuid.
 import uuid
 from datetime import date, datetime
 
-from cassandra.query import BatchStatement
-
 from connect import conectar_cassandra
 from Mongo.expedientes import db as mongo
 
@@ -30,19 +28,16 @@ def guardar_lectura(curp, tipo, valor, dispositivo_id, ts):
     lectura_id = uuid.uuid4()
     fecha = ts.date()
 
-    por_paciente = session.prepare("""
-        INSERT INTO signos_por_paciente (curp, fecha, ts, lectura_id, tipo, valor, dispositivo_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+    stmt = session.prepare("""
+        BEGIN BATCH
+            INSERT INTO signos_por_paciente (curp, fecha, ts, lectura_id, tipo, valor, dispositivo_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO signos_por_tipo (curp, tipo, fecha, ts, lectura_id, valor)
+            VALUES (?, ?, ?, ?, ?, ?);
+        APPLY BATCH
     """)
-    por_tipo = session.prepare("""
-        INSERT INTO signos_por_tipo (curp, tipo, fecha, ts, lectura_id, valor)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """)
-
-    batch = BatchStatement()
-    batch.add(por_paciente, (curp, fecha, ts, lectura_id, tipo, valor, dispositivo_id))
-    batch.add(por_tipo, (curp, tipo, fecha, ts, lectura_id, valor))
-    session.execute(batch)
+    session.execute(stmt, (curp, fecha, ts, lectura_id, tipo, valor, dispositivo_id,
+                           curp, tipo, fecha, ts, lectura_id, valor))
 
 
 def guardar_alerta(curp, alerta, severidad, area, ts):
@@ -50,19 +45,16 @@ def guardar_alerta(curp, alerta, severidad, area, ts):
     alerta_id = uuid.uuid4()
     fecha = ts.date()
 
-    por_paciente = session.prepare("""
-        INSERT INTO alertas_por_paciente (curp, fecha, ts, alerta_id, alerta, severidad, area)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+    stmt = session.prepare("""
+        BEGIN BATCH
+            INSERT INTO alertas_por_paciente (curp, fecha, ts, alerta_id, alerta, severidad, area)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO alertas_por_area (area, fecha, severidad, ts, alerta_id, curp, alerta)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        APPLY BATCH
     """)
-    por_area = session.prepare("""
-        INSERT INTO alertas_por_area (area, fecha, severidad, ts, alerta_id, curp, alerta)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """)
-
-    batch = BatchStatement()
-    batch.add(por_paciente, (curp, fecha, ts, alerta_id, alerta, severidad, area))
-    batch.add(por_area, (area, fecha, severidad, ts, alerta_id, curp, alerta))
-    session.execute(batch)
+    session.execute(stmt, (curp, fecha, ts, alerta_id, alerta, severidad, area,
+                           area, fecha, severidad, ts, alerta_id, curp, alerta))
 
 
 def guardar_llegada(cedula, curp, nombre_paciente, hora_llegada):
@@ -95,8 +87,10 @@ def pedir_fecha(texto="Fecha (AAAA-MM-DD, Enter = hoy): "):
 
 def elegir(texto, opciones):
     """Muestra una lista numerada y regresa la opción elegida."""
-    for i, opcion in enumerate(opciones, start=1):
-        print(f"  {i}. {opcion}")
+    numero = 1
+    for opcion in opciones:
+        print(f"  {numero}. {opcion}")
+        numero += 1
     numero = int(input(texto))
     if not 1 <= numero <= len(opciones):
         raise ValueError("opción fuera de la lista")
@@ -136,7 +130,7 @@ def c02_lecturas_recientes():
 
     print(f"\n{len(rows)} lecturas de {curp} el {fecha}:")
     for row in rows:
-        print(f"  {row.ts:%H:%M:%S} | {row.tipo:<20} | {row.valor:>6.1f} | {row.dispositivo_id}")
+        print(f"  {row.ts:%H:%M:%S} | {row.tipo} | {row.valor} | {row.dispositivo_id}")
 
 
 def c03_registrar_alerta():
@@ -145,6 +139,9 @@ def c03_registrar_alerta():
     curp = input("CURP del paciente: ").strip().upper()
     alerta = input("Descripción de la alerta: ").strip()
     severidad = int(input("Severidad (1 = crítica, 2 = alta, 3 = moderada): "))
+    if severidad not in SEVERIDADES:
+        print("La severidad debe ser 1, 2 o 3.")
+        return
     area = elegir("Área: ", AREAS)
 
     guardar_alerta(curp, alerta, severidad, area, datetime.now())
@@ -166,7 +163,7 @@ def c04_alertas_por_area():
 
     print(f"\n{len(rows)} alertas en {area} el {fecha}:")
     for row in rows:
-        print(f"  [{SEVERIDADES.get(row.severidad, row.severidad):<8}] {row.ts:%H:%M:%S} | {row.curp} | {row.alerta}")
+        print(f"  [{SEVERIDADES[row.severidad]}] {row.ts:%H:%M:%S} | {row.curp} | {row.alerta}")
 
 
 def c05_registrar_llegada():
@@ -191,8 +188,10 @@ def c05_registrar_llegada():
         WHERE cedula_profesional = ? AND fecha = ?
     """)
     print(f"\nFila de espera de hoy (cédula {cedula}):")
-    for i, row in enumerate(session.execute(stmt, (cedula, ahora.date())), start=1):
-        print(f"  {i}. {row.hora_llegada:%H:%M} | {row.nombre_paciente} | {row.curp}")
+    turno = 1
+    for row in session.execute(stmt, (cedula, ahora.date())):
+        print(f"  {turno}. {row.hora_llegada:%H:%M} | {row.nombre_paciente} | {row.curp}")
+        turno += 1
 
 
 def c06_historial_bateria():
@@ -228,4 +227,4 @@ def c07_historial_temperatura():
 
     print(f"\n{len(rows)} lecturas de temperatura de {curp} el {fecha}:")
     for row in rows:
-        print(f"  {row.ts:%H:%M:%S} | {row.valor:.1f} °C")
+        print(f"  {row.ts:%H:%M:%S} | {row.valor} °C")

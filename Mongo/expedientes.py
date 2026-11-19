@@ -7,9 +7,6 @@ Cassandra se usan la CURP del paciente y la cédula profesional del doctor.
 
 from datetime import datetime, timedelta
 
-from pymongo import ASCENDING, DESCENDING, TEXT
-from pymongo.errors import DuplicateKeyError
-
 from connect import conectar_mongo
 
 db = conectar_mongo()
@@ -17,16 +14,15 @@ db = conectar_mongo()
 
 def crear_indices():
     """Crea los índices del modelo de datos. Cada uno responde a un requerimiento."""
-    db.pacientes.create_index("curp", unique=True)                                            # RF-M01
-    db.pacientes.create_index([("alergias.sustancia", ASCENDING),
-                               ("alergias.severidad", ASCENDING)])                            # RF-M06
-    db.consultas.create_index([("paciente_id", ASCENDING), ("fecha", DESCENDING)])            # RF-M02, M03
-    db.consultas.create_index([("diagnostico", TEXT), ("notas", TEXT)],
-                              default_language="spanish")                                     # RF-M04
-    db.consultas.create_index([("doctor_id", ASCENDING), ("fecha", DESCENDING)])              # RF-M05
-    db.consultas.create_index("fecha")                                                        # RF-M07
-    db.doctores.create_index("cedula_profesional", unique=True)                               # RF-M02, M05
-    db.diagnosticos.create_index("codigo_cie10", unique=True)                                 # RF-M02, M07
+    # Igual que en mongosh: 1 = ascendente, -1 = descendente, "text" = índice de texto.
+    db.pacientes.create_index([("curp", 1)], unique=True)                              # RF-M01
+    db.pacientes.create_index([("alergias.sustancia", 1), ("alergias.severidad", 1)])  # RF-M06
+    db.consultas.create_index([("paciente_id", 1), ("fecha", -1)])                     # RF-M02, M03
+    db.consultas.create_index([("diagnostico", "text"), ("notas", "text")])            # RF-M04
+    db.consultas.create_index([("doctor_id", 1), ("fecha", -1)])                       # RF-M05
+    db.consultas.create_index([("fecha", 1)])                                          # RF-M07
+    db.doctores.create_index([("cedula_profesional", 1)], unique=True)                 # RF-M02, M05
+    db.diagnosticos.create_index([("codigo_cie10", 1)], unique=True)                   # RF-M02, M07
 
 
 # -------------------
@@ -96,11 +92,8 @@ def m01_registrar_paciente():
             "reaccion": input("  Reacción: ").strip(),
         })
 
-    try:
-        resultado = db.pacientes.insert_one(paciente)
-        print("\nPaciente registrado. _id:", resultado.inserted_id)
-    except DuplicateKeyError:
-        print("\nYa existe un paciente con esa CURP.")
+    resultado = db.pacientes.insert_one(paciente)
+    print("\nPaciente registrado. _id:", resultado.inserted_id)
 
 
 def m02_registrar_consulta():
@@ -159,6 +152,10 @@ def m03_expediente_completo():
     """RF-M03: perfil del paciente + sus consultas, de la más reciente a la más antigua."""
     print("\n--- EXPEDIENTE COMPLETO ---")
     curp = input("CURP del paciente: ").strip().upper()
+    p = db.pacientes.find_one({"curp": curp})
+    if not p:
+        print("No existe un paciente con esa CURP.")
+        return
 
     pipeline = [
         {"$match": {"curp": curp}},
@@ -168,16 +165,11 @@ def m03_expediente_completo():
             "foreignField": "paciente_id",
             "as": "historial",
         }},
-        # preserveNullAndEmptyArrays: el paciente sale aunque no tenga consultas.
-        {"$unwind": {"path": "$historial", "preserveNullAndEmptyArrays": True}},
+        {"$unwind": "$historial"},
         {"$sort": {"historial.fecha": -1}},
     ]
     resultado = list(db.pacientes.aggregate(pipeline))
-    if not resultado:
-        print("No existe un paciente con esa CURP.")
-        return
 
-    p = resultado[0]
     print(f"\n{nombre_completo(p)} | CURP: {p['curp']}")
     print(f"Nacimiento: {p['fecha_nacimiento']:%Y-%m-%d} | Sexo: {p['sexo']} | Sangre: {p['tipo_sangre']}")
     print(f"Teléfono: {p['telefono']} | Email: {p['email']}")
@@ -187,10 +179,9 @@ def m03_expediente_completo():
     print(f"Contacto de emergencia: {c['nombre']} ({c['parentesco']}) {c['telefono']}")
     print("Alergias:", ", ".join(f"{a['sustancia']} ({a['severidad']})" for a in p["alergias"]) or "ninguna")
 
-    consultas = [doc["historial"] for doc in resultado if "historial" in doc]
-    print(f"\nConsultas ({len(consultas)}):")
-    for consulta in consultas:
-        imprimir_consulta(consulta)
+    print(f"\nConsultas ({len(resultado)}):")
+    for doc in resultado:
+        imprimir_consulta(doc["historial"])
 
 
 def m04_buscar_por_palabra():
@@ -198,17 +189,13 @@ def m04_buscar_por_palabra():
     print("\n--- BUSCAR CONSULTAS POR PALABRA ---")
     palabra = input("Palabra clave: ").strip()
 
-    consultas = db.consultas.find(
-        {"$text": {"$search": palabra}},
-        {"score": {"$meta": "textScore"}, "fecha": 1, "doctor_nombre": 1, "especialidad": 1,
-         "motivo": 1, "diagnostico": 1, "diagnostico_cie10": 1, "notas": 1},
-    ).sort([("score", {"$meta": "textScore"})]).limit(20)
+    consultas = db.consultas.find({"$text": {"$search": palabra}}).sort("fecha", -1).limit(20)
 
     encontradas = 0
     for consulta in consultas:
         imprimir_consulta(consulta)
         encontradas += 1
-    print(f"\n{encontradas} consultas encontradas (máximo 20, las más relevantes primero).")
+    print(f"\n{encontradas} consultas encontradas (máximo 20, las más recientes primero).")
 
 
 def m05_consultas_por_periodo():
@@ -238,13 +225,14 @@ def m06_alergia_severa():
     # $elemMatch: la sustancia y la severidad tienen que estar en la MISMA alergia.
     pacientes = db.pacientes.find(
         {"alergias": {"$elemMatch": {"sustancia": sustancia, "severidad": "alta"}}},
-        {"curp": 1, "nombre": 1, "apellidos": 1, "telefono": 1, "alergias.$": 1, "_id": 0},
+        {"curp": 1, "nombre": 1, "apellidos": 1, "telefono": 1, "alergias": 1, "_id": 0},
     )
 
     total = 0
     for p in pacientes:
-        alergia = p["alergias"][0]
-        print(f"  {nombre_completo(p)} | CURP: {p['curp']} | Tel: {p['telefono']} | Reacción: {alergia['reaccion']}")
+        for alergia in p["alergias"]:
+            if alergia["sustancia"] == sustancia and alergia["severidad"] == "alta":
+                print(f"  {nombre_completo(p)} | CURP: {p['curp']} | Tel: {p['telefono']} | Reacción: {alergia['reaccion']}")
         total += 1
     print(f"\n{total} pacientes con alergia alta a {sustancia}.")
 
@@ -272,5 +260,7 @@ def m07_top_diagnosticos():
     ]
 
     print(f"\nDiagnósticos más frecuentes de {mes:02d}/{anio}:")
-    for i, d in enumerate(db.consultas.aggregate(pipeline), start=1):
-        print(f"  {i:>2}. [{d['_id']}] {d['catalogo']['descripcion']}: {d['total']} consultas")
+    lugar = 1
+    for d in db.consultas.aggregate(pipeline):
+        print(f"  {lugar}. [{d['_id']}] {d['catalogo']['descripcion']}: {d['total']} consultas")
+        lugar += 1

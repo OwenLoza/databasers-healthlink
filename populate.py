@@ -11,7 +11,7 @@ Las lecturas de Cassandra usan la fecha de hoy para que las consultas
 
 import json
 import random
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import pydgraph
 from faker import Faker
@@ -145,7 +145,8 @@ def poblar_mongo(pacientes):
     # Los _id que generó MongoDB, para referenciarlos desde consultas.
     id_paciente = {p["curp"]: p["_id"] for p in db.pacientes.find({}, {"curp": 1})}
     doctores = list(db.doctores.find())
-    ruiz = next(d for d in doctores if d["cedula_profesional"] == CEDULA_RUIZ)
+    ruiz = db.doctores.find_one({"cedula_profesional": CEDULA_RUIZ})
+    descripciones = {d["codigo_cie10"]: d["descripcion"] for d in DIAGNOSTICOS}
 
     consultas = []
     for i in range(NUM_CONSULTAS):
@@ -155,7 +156,7 @@ def poblar_mongo(pacientes):
         else:
             curp, doctor = random.choice(pacientes)["curp"], random.choice(doctores)
             codigo = random.choice(DIAGNOSTICOS)["codigo_cie10"]
-        descripcion = next(d["descripcion"] for d in DIAGNOSTICOS if d["codigo_cie10"] == codigo)
+        descripcion = descripciones[codigo]
         motivo, nota = MOTIVOS[codigo]
 
         consultas.append({
@@ -199,8 +200,8 @@ def prescripcion(medicamento, cedula, dias_atras, dias_tratamiento):
     return {
         "dgraph.type": "Prescripcion",
         "dosis": random.choice(["5 mg cada 24 h", "50 mg cada 12 h", "500 mg cada 8 h"]),
-        "fecha_inicio": inicio.isoformat(timespec="seconds"),
-        "fecha_final": fin.isoformat(timespec="seconds"),
+        "fecha_inicio": inicio.strftime("%Y-%m-%dT%H:%M:%S"),
+        "fecha_final": fin.strftime("%Y-%m-%dT%H:%M:%S"),
         "activa": fin > datetime.now(),
         "prescribe": {"uid": "_:med" + str(MEDICAMENTOS.index(medicamento))},
         "prescrita_por": {"uid": "_:doc" + cedula},
@@ -326,7 +327,7 @@ def poblar_cassandra(pacientes):
                                   random.choice(telemetria.AREAS), ahora - timedelta(minutes=random.randint(0, 480)))
 
     # RF-C05: fila de espera de hoy para tres doctores, desde las 8:00.
-    inicio_dia = datetime.combine(date.today(), datetime.min.time()).replace(hour=8)
+    inicio_dia = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
     for cedula in [CEDULA_RUIZ, CEDULA_HERNANDEZ, DOCTORES[2]["cedula_profesional"]]:
         for k, p in enumerate(random.sample(pacientes, k=4)):
             telemetria.guardar_llegada(cedula, p["curp"], f"{p['nombre']} {p['apellidos']}",

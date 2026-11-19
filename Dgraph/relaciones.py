@@ -38,23 +38,21 @@ def mutar(datos):
 
 
 def obtener_o_crear(llave, valor, nodo):
-    """Regresa el uid del nodo con llave = valor; si no existe lo crea con los datos de `nodo`.
+    """Regresa el uid del nodo con llave = valor; si no existe lo crea con los datos de `nodo`."""
+    query = """
+    query q($valor: string) {
+        nodo(func: eq(%s, $valor)) {
+            uid
+        }
+    }
+    """ % llave
+    res = consultar(query, {"$valor": valor})
+    if res["nodo"]:
+        return res["nodo"][0]["uid"]
 
-    La consulta y la mutación van en la misma transacción: como la llave tiene
-    @upsert, si dos escrituras intentan crear el mismo nodo a la vez una falla
-    y no quedan nodos duplicados.
-    """
-    query = f"query q($valor: string) {{ nodo(func: eq({llave}, $valor)) {{ uid }} }}"
-    txn = client.txn()
-    try:
-        res = json.loads(txn.query(query, variables={"$valor": valor}).json)
-        if res["nodo"]:
-            return res["nodo"][0]["uid"]
-        uids = txn.mutate(set_obj={"uid": "_:nuevo", **nodo}).uids
-        txn.commit()
-        return uids["nuevo"]
-    finally:
-        txn.discard()
+    nodo["uid"] = "_:nuevo"
+    uids = mutar(nodo)
+    return uids["nuevo"]
 
 
 def uid_paciente(curp):
@@ -212,8 +210,8 @@ def d03_registrar_prescripcion():
             "uid": "_:receta",
             "dgraph.type": "Prescripcion",
             "dosis": dosis,
-            "fecha_inicio": inicio.isoformat(timespec="seconds"),
-            "fecha_final": fin.isoformat(timespec="seconds"),
+            "fecha_inicio": inicio.strftime("%Y-%m-%dT%H:%M:%S"),
+            "fecha_final": fin.strftime("%Y-%m-%dT%H:%M:%S"),
             "activa": True,
             "prescribe": {"uid": medicamento["uid"]},
             "prescrita_por": {"uid": doctor},

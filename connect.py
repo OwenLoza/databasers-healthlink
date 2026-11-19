@@ -21,9 +21,8 @@ MONGO_DB = "healthlink"
 
 
 def conectar_mongo():
-    """Regresa la base healthlink de MongoDB. Falla si el contenedor no está arriba."""
-    cliente = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    cliente.admin.command("ping")
+    """Regresa la base healthlink de MongoDB."""
+    cliente = MongoClient(MONGO_URI)
     return cliente[MONGO_DB]
 
 
