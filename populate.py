@@ -283,6 +283,9 @@ CASSANDRA
 TABLAS_CASSANDRA = ["signos_por_paciente", "signos_por_tipo", "alertas_por_paciente",
                     "alertas_por_area", "llegadas_por_doctor", "bateria_dispositivos"]
 
+TEXTOS_ALERTA = ["Frecuencia cardiaca elevada", "Ritmo cardiaco bajo", "Fiebre",
+                 "Oxigenación baja", "Presión arterial elevada"]
+
 
 def crear_tablas_cassandra(session):
     """Ejecuta cada CREATE TABLE de esquema.cql (sin las líneas de comentario)."""
@@ -323,9 +326,23 @@ def poblar_cassandra(pacientes):
             lecturas += 3
         numero += 1
 
+    # RF-C03, C04: alerta crítica de Ana en Urgencias (para la demo) y 12 alertas al azar, solo de hoy.
+    alertas = [(ANA["curp"], "Ritmo cardiaco bajo", 1, "Urgencias", ahora - timedelta(hours=2))]
+    for _ in range(12):
+        p = random.choice(con_dispositivo)
+        alertas.append((p["curp"], random.choice(TEXTOS_ALERTA), random.randint(1, 3),
+                        random.choice(telemetria.AREAS), ahora - timedelta(minutes=random.randint(0, 480))))
+
+    total_alertas = 0
+    for curp, texto, severidad, area, ts in alertas:
+        if ts.date() == ahora.date():
+            telemetria.guardar_alerta(curp, texto, severidad, area, ts)
+            total_alertas += 1
+
     print("Cassandra:")
     print(f"  lecturas: {lecturas} (en signos_por_paciente y signos_por_tipo)")
     print(f"  dispositivos: {len(con_dispositivo)} (pulsera_01 a pulsera_{len(con_dispositivo):02d})")
+    print(f"  alertas: {total_alertas} (en alertas_por_paciente y alertas_por_area)")
 
 
 if __name__ == "__main__":

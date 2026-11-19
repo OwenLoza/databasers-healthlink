@@ -12,6 +12,8 @@ from connect import conectar_cassandra
 session = conectar_cassandra()
 
 TIPOS = ["frecuencia_cardiaca", "temperatura", "oxigenacion"]
+AREAS = ["Urgencias", "Piso 3", "Terapia intensiva"]
+SEVERIDADES = {1: "crítica", 2: "alta", 3: "moderada"}
 
 
 def pendiente(requerimiento):
@@ -38,6 +40,24 @@ def guardar_lectura(curp, tipo, valor, dispositivo_id, ts):
     """)
     session.execute(stmt, (curp, fecha, ts, lectura_id, tipo, valor, dispositivo_id,
                            curp, tipo, fecha, ts, lectura_id, valor))
+
+
+def guardar_alerta(curp, alerta, severidad, area, ts):
+    """RF-C03: guarda la alerta en la bitácora del paciente y en el tablero del área (BATCH).
+    Solo se inserta: no hay funciones para actualizar ni borrar alertas."""
+    alerta_id = uuid.uuid4()
+    fecha = ts.date()
+
+    stmt = session.prepare("""
+        BEGIN BATCH
+            INSERT INTO alertas_por_paciente (curp, fecha, ts, alerta_id, alerta, severidad, area)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO alertas_por_area (area, fecha, severidad, ts, alerta_id, curp, alerta)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        APPLY BATCH
+    """)
+    session.execute(stmt, (curp, fecha, ts, alerta_id, alerta, severidad, area,
+                           area, fecha, severidad, ts, alerta_id, curp, alerta))
 
 
 # -------------------
@@ -101,13 +121,46 @@ def c02_lecturas_recientes():
 
 
 def c03_registrar_alerta():
-    """RF-C03: registrar alerta biométrica en la bitácora inmutable."""
-    pendiente("RF-C03")
+    """RF-C03: registrar alerta biométrica y mostrar la bitácora del día del paciente."""
+    print("\n--- REGISTRAR ALERTA ---")
+    curp = input("CURP del paciente: ").strip().upper()
+    alerta = input("Descripción de la alerta: ").strip()
+    severidad = int(input("Severidad (1 = crítica, 2 = alta, 3 = moderada): "))
+    if severidad not in SEVERIDADES:
+        print("La severidad debe ser 1, 2 o 3.")
+        return
+    area = elegir("Área: ", AREAS)
+
+    ahora = datetime.now()
+    guardar_alerta(curp, alerta, severidad, area, ahora)
+    print("\nAlerta registrada.")
+
+    stmt = session.prepare("""
+        SELECT ts, severidad, area, alerta
+        FROM alertas_por_paciente
+        WHERE curp = ? AND fecha = ?
+    """)
+    print(f"\nBitácora de alertas de hoy ({curp}):")
+    for row in session.execute(stmt, (curp, ahora.date())):
+        print(f"  {row.ts:%H:%M:%S} | [{SEVERIDADES[row.severidad]}] | {row.area} | {row.alerta}")
 
 
 def c04_alertas_por_area():
     """RF-C04: tablero de alertas del día de un área, las más graves primero."""
-    pendiente("RF-C04")
+    print("\n--- ALERTAS POR ÁREA ---")
+    area = elegir("Área: ", AREAS)
+    fecha = pedir_fecha()
+
+    stmt = session.prepare("""
+        SELECT severidad, ts, curp, alerta
+        FROM alertas_por_area
+        WHERE area = ? AND fecha = ?
+    """)
+    rows = list(session.execute(stmt, (area, fecha)))
+
+    print(f"\n{len(rows)} alertas en {area} el {fecha}:")
+    for row in rows:
+        print(f"  [{SEVERIDADES[row.severidad]}] {row.ts:%H:%M:%S} | {row.curp} | {row.alerta}")
 
 
 def c05_registrar_llegada():
