@@ -121,5 +121,18 @@ def c06_historial_bateria():
 
 
 def c07_historial_temperatura():
-    """RF-C07: historial de temperatura del día de un paciente."""
-    pendiente("RF-C07")
+    """RF-C07: historial de temperatura del día de un paciente (partición curp + tipo + fecha)."""
+    print("\n--- HISTORIAL DE TEMPERATURA ---")
+    curp = input("CURP del paciente: ").strip().upper()
+    fecha = pedir_fecha()
+
+    stmt = session.prepare("""
+        SELECT ts, valor
+        FROM signos_por_tipo
+        WHERE curp = ? AND tipo = 'temperatura' AND fecha = ?
+    """)
+    rows = list(session.execute(stmt, (curp, fecha)))
+
+    print(f"\n{len(rows)} lecturas de temperatura de {curp} el {fecha}:")
+    for row in rows:
+        print(f"  {row.ts:%H:%M:%S} | {row.valor} °C")
