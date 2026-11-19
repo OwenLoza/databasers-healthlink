@@ -36,8 +36,9 @@ CASSANDRA_KEYSPACE = "healthlink"
 
 def conectar_cassandra():
     """Regresa la sesión de Cassandra ya dentro del keyspace healthlink (lo crea si no existe)."""
-    cluster = Cluster(["127.0.0.1"])
+    cluster = Cluster(["127.0.0.1"])   # nodo del contenedor (puerto 9042)
     session = cluster.connect()
+    # replication_factor 1: solo hay un nodo, así que solo cabe una copia de cada dato.
     session.execute(f"""
         CREATE KEYSPACE IF NOT EXISTS {CASSANDRA_KEYSPACE}
         WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': '1'}}
