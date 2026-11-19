@@ -339,10 +339,24 @@ def poblar_cassandra(pacientes):
             telemetria.guardar_alerta(curp, texto, severidad, area, ts)
             total_alertas += 1
 
+    # RF-C05: fila de espera de hoy desde las 8:00, 4 pacientes por doctor, uno cada 25 minutos.
+    # Ana no se incluye para registrar su llegada en vivo en la demo.
+    ocho = ahora.replace(hour=8, minute=0, second=0)
+    llegadas = 0
+    for cedula in [CEDULA_RUIZ, CEDULA_HERNANDEZ, DOCTORES[2]["cedula_profesional"]]:
+        k = 0
+        for p in random.sample(pacientes[1:], 4):
+            hora = ocho + timedelta(minutes=25 * k)
+            if hora <= ahora:   # solo llegadas que ya pasaron
+                telemetria.guardar_llegada(cedula, p["curp"], f"{p['nombre']} {p['apellidos']}", hora)
+                llegadas += 1
+            k += 1
+
     print("Cassandra:")
     print(f"  lecturas: {lecturas} (en signos_por_paciente y signos_por_tipo)")
     print(f"  dispositivos: {len(con_dispositivo)} (pulsera_01 a pulsera_{len(con_dispositivo):02d})")
     print(f"  alertas: {total_alertas} (en alertas_por_paciente y alertas_por_area)")
+    print(f"  llegadas: {llegadas} (en llegadas_por_doctor, 3 doctores)")
 
 
 if __name__ == "__main__":

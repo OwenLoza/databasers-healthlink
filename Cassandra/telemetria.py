@@ -8,6 +8,7 @@ import uuid
 from datetime import date, datetime
 
 from connect import conectar_cassandra
+from Mongo.expedientes import db as mongo
 
 session = conectar_cassandra()
 
@@ -58,6 +59,15 @@ def guardar_alerta(curp, alerta, severidad, area, ts):
     """)
     session.execute(stmt, (curp, fecha, ts, alerta_id, alerta, severidad, area,
                            area, fecha, severidad, ts, alerta_id, curp, alerta))
+
+
+def guardar_llegada(cedula, curp, nombre_paciente, hora_llegada):
+    """RF-C05: agrega al paciente a la fila de espera del doctor en ese día (una sola tabla, sin BATCH)."""
+    stmt = session.prepare("""
+        INSERT INTO llegadas_por_doctor (cedula_profesional, fecha, hora_llegada, llegada_id, curp, nombre_paciente)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """)
+    session.execute(stmt, (cedula, hora_llegada.date(), hora_llegada, uuid.uuid4(), curp, nombre_paciente))
 
 
 # -------------------
@@ -164,8 +174,36 @@ def c04_alertas_por_area():
 
 
 def c05_registrar_llegada():
-    """RF-C05: registrar llegada de un paciente a la sala de espera."""
-    pendiente("RF-C05")
+    """RF-C05: registrar llegada a la sala de espera y mostrar la fila del día del doctor.
+    La cédula y la CURP se validan en MongoDB; el nombre del paciente se copia de ahí."""
+    print("\n--- REGISTRAR LLEGADA ---")
+    cedula = input("Cédula profesional del doctor: ").strip()
+    doctor = mongo.doctores.find_one({"cedula_profesional": cedula})
+    if doctor is None:
+        print("No existe un doctor con esa cédula.")
+        return
+
+    curp = input("CURP del paciente: ").strip().upper()
+    paciente = mongo.pacientes.find_one({"curp": curp})
+    if paciente is None:
+        print("No existe un paciente con esa CURP.")
+        return
+
+    nombre_paciente = f"{paciente['nombre']} {paciente['apellidos']}"
+    ahora = datetime.now()
+    guardar_llegada(cedula, curp, nombre_paciente, ahora)
+    print(f"\nLlegada de {nombre_paciente} registrada.")
+
+    stmt = session.prepare("""
+        SELECT hora_llegada, curp, nombre_paciente
+        FROM llegadas_por_doctor
+        WHERE cedula_profesional = ? AND fecha = ?
+    """)
+    print(f"\nSala de espera de hoy - {doctor['nombre']} {doctor['apellidos']}:")
+    turno = 1
+    for row in session.execute(stmt, (cedula, ahora.date())):
+        print(f"  {turno}. {row.hora_llegada:%H:%M} | {row.curp} | {row.nombre_paciente}")
+        turno += 1
 
 
 def c06_historial_bateria():
