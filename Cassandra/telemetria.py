@@ -1,7 +1,7 @@
 """HealthLink: módulo de Telemetría IoT (Cassandra). RF-C01 a RF-C07.
 
-En reconstrucción: cada requerimiento se implementa en su propio commit.
-Los nombres de las funciones no cambian porque main.py y populate.py los usan.
+Tablas en esquema.cql. Cada consulta lee una sola partición (sin ALLOW FILTERING).
+Se enlaza con MongoDB y Dgraph por curp (paciente) y cedula_profesional (doctor).
 """
 
 import uuid
@@ -15,10 +15,6 @@ session = conectar_cassandra()
 TIPOS = ["frecuencia_cardiaca", "temperatura", "oxigenacion"]
 AREAS = ["Urgencias", "Piso 3", "Terapia intensiva"]
 SEVERIDADES = {1: "crítica", 2: "alta", 3: "moderada"}
-
-
-def pendiente(requerimiento):
-    print(f"\nPendiente: {requerimiento} en reconstrucción.")
 
 
 # -------------------
@@ -68,6 +64,16 @@ def guardar_llegada(cedula, curp, nombre_paciente, hora_llegada):
         VALUES (?, ?, ?, ?, ?, ?)
     """)
     session.execute(stmt, (cedula, hora_llegada.date(), hora_llegada, uuid.uuid4(), curp, nombre_paciente))
+
+
+def guardar_bateria(dispositivo_id, nivel, ts):
+    """RF-C06: guarda el nivel de batería que reporta un dispositivo (una sola tabla, sin BATCH).
+    No lleva uuid: un dispositivo no manda dos niveles en el mismo instante."""
+    stmt = session.prepare("""
+        INSERT INTO bateria_dispositivos (dispositivo_id, fecha, ts, nivel_bateria)
+        VALUES (?, ?, ?, ?)
+    """)
+    session.execute(stmt, (dispositivo_id, ts.date(), ts, nivel))
 
 
 # -------------------
@@ -207,8 +213,21 @@ def c05_registrar_llegada():
 
 
 def c06_historial_bateria():
-    """RF-C06: historial de batería de un dispositivo."""
-    pendiente("RF-C06")
+    """RF-C06: historial de batería del día de un dispositivo, el nivel más reciente primero."""
+    print("\n--- HISTORIAL DE BATERÍA ---")
+    dispositivo_id = input("Id del dispositivo (ej. pulsera_01): ").strip()
+    fecha = pedir_fecha()
+
+    stmt = session.prepare("""
+        SELECT ts, nivel_bateria
+        FROM bateria_dispositivos
+        WHERE dispositivo_id = ? AND fecha = ?
+    """)
+    rows = list(session.execute(stmt, (dispositivo_id, fecha)))
+
+    print(f"\n{len(rows)} reportes de batería de {dispositivo_id} el {fecha}:")
+    for row in rows:
+        print(f"  {row.ts:%H:%M:%S} | {row.nivel_bateria}%")
 
 
 def c07_historial_temperatura():

@@ -352,11 +352,25 @@ def poblar_cassandra(pacientes):
                 llegadas += 1
             k += 1
 
+    # RF-C06: cada pulsera reporta su batería una vez por hora en las últimas 8 horas,
+    # empezando en 100% y bajando de 3 a 8% por hora (solo reportes de hoy).
+    reportes = 0
+    for numero in range(1, len(con_dispositivo) + 1):
+        dispositivo = f"pulsera_{numero:02d}"
+        nivel = 100
+        for k in range(8, -1, -1):
+            ts = ahora - timedelta(hours=k)
+            if ts.date() == ahora.date():
+                telemetria.guardar_bateria(dispositivo, nivel, ts)
+                reportes += 1
+            nivel -= random.randint(3, 8)
+
     print("Cassandra:")
     print(f"  lecturas: {lecturas} (en signos_por_paciente y signos_por_tipo)")
     print(f"  dispositivos: {len(con_dispositivo)} (pulsera_01 a pulsera_{len(con_dispositivo):02d})")
     print(f"  alertas: {total_alertas} (en alertas_por_paciente y alertas_por_area)")
     print(f"  llegadas: {llegadas} (en llegadas_por_doctor, 3 doctores)")
+    print(f"  reportes de batería: {reportes} (en bateria_dispositivos)")
 
 
 if __name__ == "__main__":
