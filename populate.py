@@ -159,7 +159,7 @@ def poblar_mongo(pacientes):
         descripcion = descripciones[codigo]
         motivo, nota = MOTIVOS[codigo]
 
-        consultas.append({
+        consulta = {
             "paciente_id": id_paciente[curp],
             "doctor_id": doctor["_id"],
             "doctor_nombre": f"{doctor['nombre']} {doctor['apellidos']}",
@@ -180,7 +180,25 @@ def poblar_mongo(pacientes):
                  "dias": random.choice([5, 7, 14, 30])}
                 for m in random.sample(MEDICAMENTOS, k=random.randint(0, 2))
             ],
-        })
+        }
+
+        # Ana es alérgica a la penicilina: no se le receta amoxicilina (es una penicilina).
+        if curp == ANA["curp"]:
+            sin_penicilina = []
+            for r in consulta["medicamentos_recetados"]:
+                if r["nombre"] != "Amoxicilina":
+                    sin_penicilina.append(r)
+            consulta["medicamentos_recetados"] = sin_penicilina
+
+        # La primera consulta de Ana es la receta de warfarina que también está en Dgraph
+        # (Dra. Ruiz, hace 20 días, 90 días de tratamiento): las dos bases cuentan lo mismo.
+        if i == 0:
+            consulta["fecha"] = datetime.now() - timedelta(days=20)
+            consulta["medicamentos_recetados"] = [
+                {"nombre": "Warfarina", "dosis": "5 mg", "frecuencia": "cada 24 horas", "dias": 90}
+            ]
+
+        consultas.append(consulta)
     db.consultas.insert_many(consultas)
 
     print("MongoDB:")
@@ -320,14 +338,17 @@ def poblar_cassandra(pacientes):
             ts = ahora - timedelta(minutes=20 * k)
             if ts.date() != ahora.date():
                 break   # solo lecturas de hoy, para que las consultas "del día" tengan datos
-            telemetria.guardar_lectura(p["curp"], "frecuencia_cardiaca", round(random.gauss(78, 12)), dispositivo, ts)
+            fc = round(random.gauss(78, 12))
+            if p is ANA and k == 6:
+                fc = 45   # hace 2 h: la bradicardia que dispara la alerta crítica de Ana (abajo)
+            telemetria.guardar_lectura(p["curp"], "frecuencia_cardiaca", fc, dispositivo, ts)
             telemetria.guardar_lectura(p["curp"], "temperatura", round(random.gauss(36.8, 0.5), 1), dispositivo, ts)
             telemetria.guardar_lectura(p["curp"], "oxigenacion", round(random.uniform(92, 99)), dispositivo, ts)
             lecturas += 3
         numero += 1
 
     # RF-C03, C04: alerta crítica de Ana en Urgencias (para la demo) y 12 alertas al azar, solo de hoy.
-    alertas = [(ANA["curp"], "Ritmo cardiaco bajo", 1, "Urgencias", ahora - timedelta(hours=2))]
+    alertas = [(ANA["curp"], "Ritmo cardiaco bajo (45 lpm)", 1, "Urgencias", ahora - timedelta(hours=2))]
     for _ in range(12):
         p = random.choice(con_dispositivo)
         alertas.append((p["curp"], random.choice(TEXTOS_ALERTA), random.randint(1, 3),
