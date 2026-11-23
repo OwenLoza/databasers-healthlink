@@ -38,7 +38,12 @@ def mutar(datos):
 
 
 def obtener_o_crear(llave, valor, nodo):
-    """Regresa el uid del nodo con llave = valor; si no existe lo crea con los datos de `nodo`."""
+    """Regresa el uid del nodo con llave = valor; si no existe lo crea con los datos de `nodo`.
+
+    La búsqueda y la creación van en la misma transacción: como la llave tiene
+    @upsert, si dos usuarios intentan crear el mismo nodo al mismo tiempo,
+    Dgraph rechaza el commit de uno y no quedan nodos duplicados.
+    """
     query = """
     query q($valor: string) {
         nodo(func: eq(%s, $valor)) {
@@ -46,13 +51,18 @@ def obtener_o_crear(llave, valor, nodo):
         }
     }
     """ % llave
-    res = consultar(query, {"$valor": valor})
-    if res["nodo"]:
-        return res["nodo"][0]["uid"]
+    txn = client.txn()
+    try:
+        res = json.loads(txn.query(query, variables={"$valor": valor}).json)
+        if res["nodo"]:
+            return res["nodo"][0]["uid"]
 
-    nodo["uid"] = "_:nuevo"
-    uids = mutar(nodo)
-    return uids["nuevo"]
+        nodo["uid"] = "_:nuevo"
+        uids = txn.mutate(set_obj=nodo).uids
+        txn.commit()
+        return uids["nuevo"]
+    finally:
+        txn.discard()
 
 
 def uid_paciente(curp):
